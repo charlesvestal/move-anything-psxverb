@@ -15,7 +15,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
 #include "audio_fx_api_v1.h"
 
@@ -40,7 +39,7 @@ static float g_mix = 0.35f;     /* Dry/wet mix */
 /* Work buffers (circular, stereo) */
 static float g_work_l[WORK_SIZE];
 static float g_work_r[WORK_SIZE];
-static int g_work_pos = 0;
+static unsigned int g_work_pos = 0;
 
 /* IIR lowpass state */
 static float g_iir_l = 0.0f;
@@ -196,8 +195,8 @@ static void fx_process_block(int16_t *audio_inout, int frames) {
 
         /* APF1 */
         int apf1_idx = g_work_pos & 2047;  /* 2048-sample APF buffer mask */
-        float apf1_delayed_l = g_apf1_l[(apf1_idx - g_apf1_delay) & 2047];
-        float apf1_delayed_r = g_apf1_r[(apf1_idx - g_apf1_delay) & 2047];
+        float apf1_delayed_l = g_apf1_l[(apf1_idx - g_apf1_delay + 2048) & 2047];
+        float apf1_delayed_r = g_apf1_r[(apf1_idx - g_apf1_delay + 2048) & 2047];
 
         float apf1_out_l = -comb_l + apf1_delayed_l;
         float apf1_out_r = -comb_r + apf1_delayed_r;
@@ -206,8 +205,8 @@ static void fx_process_block(int16_t *audio_inout, int frames) {
         g_apf1_r[apf1_idx] = comb_r + apf1_delayed_r * APF_COEFF;
 
         /* APF2 */
-        float apf2_delayed_l = g_apf2_l[(apf1_idx - g_apf2_delay) & 2047];
-        float apf2_delayed_r = g_apf2_r[(apf1_idx - g_apf2_delay) & 2047];
+        float apf2_delayed_l = g_apf2_l[(apf1_idx - g_apf2_delay + 2048) & 2047];
+        float apf2_delayed_r = g_apf2_r[(apf1_idx - g_apf2_delay + 2048) & 2047];
 
         float apf2_out_l = -apf1_out_l + apf2_delayed_l;
         float apf2_out_r = -apf1_out_r + apf2_delayed_r;
