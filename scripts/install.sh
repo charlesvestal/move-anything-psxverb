@@ -19,8 +19,15 @@ echo "Copying module to Move..."
 ssh ableton@move.local "mkdir -p /data/UserData/move-anything/modules/chain/audio_fx/psxverb"
 scp -r dist/psxverb/* ableton@move.local:/data/UserData/move-anything/modules/chain/audio_fx/psxverb/
 
+# Install chain presets if they exist
+if [ -d "src/chain_patches" ]; then
+    echo "Installing chain presets..."
+    scp src/chain_patches/*.json ableton@move.local:/data/UserData/move-anything/modules/chain/patches/
+fi
+
 echo ""
 echo "=== Install Complete ==="
 echo "Module installed to: /data/UserData/move-anything/modules/chain/audio_fx/psxverb/"
+echo "Chain presets installed to: /data/UserData/move-anything/modules/chain/patches/"
 echo ""
 echo "Restart Move Anything to load the new module."
