@@ -42,6 +42,8 @@ The module installs to `/data/UserData/move-anything/modules/chain/audio_fx/psxv
 
 ## Credits
 
+Ported from [CVCHothouse](https://github.com/charlesvestal/CVCHothouse) (Daisy Seed effects pedal collection).
+
 Based on the PlayStation 1 SPU reverb architecture as documented in:
 - [No$psx SPU documentation](https://problemkaputt.de/psx-spx.htm#spureverbformula) by Martin Korth
 - [Mednafen PSX emulator](https://mednafen.github.io/) SPU implementation
