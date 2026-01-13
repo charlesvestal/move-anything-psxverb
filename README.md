@@ -2,6 +2,25 @@
 
 PlayStation 1 SPU reverb emulation audio effect module for Move Anything.
 
+## Prerequisites
+
+- [Move Anything](https://github.com/charlesvestal/move-anything) installed on your Ableton Move
+
+## Installation
+
+### Via Module Store (Recommended)
+
+1. Launch Move Anything on your Move
+2. Select **Module Store** from the main menu
+3. Navigate to **Audio FX** → **PSX Verb**
+4. Select **Install**
+
+### Manual Installation
+
+```bash
+./scripts/install.sh
+```
+
 ## Features
 
 - **Preset**: 6 classic PSX reverb types (Room, Studio S/M/L, Hall, Space Echo)
