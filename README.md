@@ -40,6 +40,12 @@ Input --> [IIR lowpass] --> [Comb bank (4x)] --> [Allpass (2x)] --> Output
 
 The module installs to `/data/UserData/move-anything/modules/chain/audio_fx/psxverb/`
 
+## Credits
+
+Based on the PlayStation 1 SPU reverb architecture as documented in:
+- [No$psx SPU documentation](https://problemkaputt.de/psx-spx.htm#spureverbformula) by Martin Korth
+- [Mednafen PSX emulator](https://mednafen.github.io/) SPU implementation
+
 ## License
 
 MIT License - Copyright (c) 2025 Charles Vestal
