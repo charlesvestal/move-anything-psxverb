@@ -64,9 +64,15 @@ cat src/module.json > dist/psxverb/module.json
 cat build/psxverb.so > dist/psxverb/psxverb.so
 chmod +x dist/psxverb/psxverb.so
 
+# Create tarball for release
+cd dist
+tar -czvf psxverb-module.tar.gz psxverb/
+cd ..
+
 echo ""
 echo "=== Build Complete ==="
 echo "Output: dist/psxverb/"
+echo "Tarball: dist/psxverb-module.tar.gz"
 echo ""
 echo "To install on Move:"
 echo "  ./scripts/install.sh"
