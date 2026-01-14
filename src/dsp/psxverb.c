@@ -24,6 +24,21 @@
 
 #include "audio_fx_api_v1.h"
 
+/* Audio FX API v2 - instance-based */
+#define AUDIO_FX_API_VERSION_2 2
+#define AUDIO_FX_INIT_V2_SYMBOL "move_audio_fx_init_v2"
+
+typedef struct audio_fx_api_v2 {
+    uint32_t api_version;
+    void* (*create_instance)(const char *module_dir, const char *config_json);
+    void (*destroy_instance)(void *instance);
+    void (*process_block)(void *instance, int16_t *audio_inout, int frames);
+    void (*set_param)(void *instance, const char *key, const char *val);
+    int (*get_param)(void *instance, const char *key, char *buf, int buf_len);
+} audio_fx_api_v2_t;
+
+typedef audio_fx_api_v2_t* (*audio_fx_init_v2_fn)(const host_api_v1_t *host);
+
 #define SAMPLE_RATE 44100
 #define PSX_INTERNAL_RATE 22050  /* PSX SPU runs at half sample rate */
 
@@ -782,4 +797,303 @@ audio_fx_api_v1_t* move_audio_fx_init_v1(const host_api_v1_t *host) {
     fx_log("PSX Verb plugin initialized (exact port from CVCHothouse/PSXVerb)");
 
     return &g_fx_api;
+}
+
+/* ============================================================================
+ * AUDIO FX API v2 - Instance-based
+ * ============================================================================ */
+
+typedef struct {
+    int16_t *work_buffer;
+    int preset_idx;
+    float decay;
+    float mix;
+    float input_gain;
+    float reverb_level;
+    scaled_preset_t current;
+    scaled_preset_t base;
+    workarea_t work;
+    halfband_t down_l, down_r;
+    halfband_t up_l, up_r;
+} psxverb_instance_t;
+
+/* v2 helper: scale preset with instance state */
+static void v2_scale_preset(psxverb_instance_t *inst, const psx_preset_t *src, scaled_preset_t *dst) {
+    dst->dAPF1 = src->dAPF1;
+    dst->dAPF2 = src->dAPF2;
+    dst->dLSAME = src->dLSAME;
+    dst->dRSAME = src->dRSAME;
+    dst->dLDIFF = src->dLDIFF;
+    dst->dRDIFF = src->dRDIFF;
+    dst->mLSAME = src->mLSAME;
+    dst->mRSAME = src->mRSAME;
+    dst->mLDIFF = src->mLDIFF;
+    dst->mRDIFF = src->mRDIFF;
+    dst->mLCOMB1 = src->mLCOMB1;
+    dst->mRCOMB1 = src->mRCOMB1;
+    dst->mLCOMB2 = src->mLCOMB2;
+    dst->mRCOMB2 = src->mRCOMB2;
+    dst->mLCOMB3 = src->mLCOMB3;
+    dst->mRCOMB3 = src->mRCOMB3;
+    dst->mLCOMB4 = src->mLCOMB4;
+    dst->mRCOMB4 = src->mRCOMB4;
+    dst->mLAPF1 = src->mLAPF1;
+    dst->mRAPF1 = src->mRAPF1;
+    dst->mLAPF2 = src->mLAPF2;
+    dst->mRAPF2 = src->mRAPF2;
+
+    dst->vIIR_f = coeff_to_float(src->vIIR);
+    dst->vCOMB1_f = coeff_to_float(src->vCOMB1);
+    dst->vCOMB2_f = coeff_to_float(src->vCOMB2);
+    dst->vCOMB3_f = coeff_to_float(src->vCOMB3);
+    dst->vCOMB4_f = coeff_to_float(src->vCOMB4);
+    dst->vWALL_f = coeff_to_float(src->vWALL);
+    dst->vAPF1_f = coeff_to_float(src->vAPF1);
+    dst->vAPF2_f = coeff_to_float(src->vAPF2);
+    dst->vLIN_f = coeff_to_float(src->vLIN);
+    dst->vRIN_f = coeff_to_float(src->vRIN);
+    dst->vLOUT_f = coeff_to_float(src->vLOUT);
+    dst->vROUT_f = coeff_to_float(src->vROUT);
+}
+
+/* v2 helper: update decay */
+static void v2_update_decay(psxverb_instance_t *inst) {
+    inst->current.vWALL_f = inst->base.vWALL_f * inst->decay;
+}
+
+/* v2 helper: apply preset */
+static void v2_apply_preset(psxverb_instance_t *inst, int idx) {
+    if (idx < 0 || idx >= 6) return;
+    inst->preset_idx = idx;
+    const psx_preset_t *p = &g_presets[idx];
+
+    v2_scale_preset(inst, p, &inst->base);
+    inst->current = inst->base;
+
+    /* Apply input gain and reverb level */
+    float in_scale = inst->input_gain * 2.0f;
+    inst->current.vLIN_f = inst->base.vLIN_f * in_scale;
+    inst->current.vRIN_f = inst->base.vRIN_f * in_scale;
+    float out_scale = inst->reverb_level * 4.0f;
+    inst->current.vLOUT_f = inst->base.vLOUT_f * out_scale;
+    inst->current.vROUT_f = inst->base.vROUT_f * out_scale;
+
+    v2_update_decay(inst);
+
+    /* Initialize work area */
+    uint32_t work_size = next_pow2(p->work_size);
+    if (work_size > WORK_MAX_SIZE) work_size = WORK_MAX_SIZE;
+
+    memset(inst->work_buffer, 0, work_size * sizeof(int16_t));
+    inst->work.buf = inst->work_buffer;
+    inst->work.size_mask = work_size - 1;
+    inst->work.base = 0;
+}
+
+/* v2 API: create instance */
+static void* v2_create_instance(const char *module_dir, const char *config_json) {
+    psxverb_instance_t *inst = (psxverb_instance_t*)calloc(1, sizeof(psxverb_instance_t));
+    if (!inst) return NULL;
+
+    inst->work_buffer = (int16_t*)calloc(WORK_MAX_SIZE, sizeof(int16_t));
+    if (!inst->work_buffer) {
+        free(inst);
+        return NULL;
+    }
+
+    /* Initialize state */
+    inst->preset_idx = 4;       /* Default: Hall */
+    inst->decay = 0.8f;
+    inst->mix = 0.35f;
+    inst->input_gain = 0.5f;
+    inst->reverb_level = 0.5f;
+
+    /* Initialize halfband filters */
+    halfband_init(&inst->down_l);
+    halfband_init(&inst->down_r);
+    halfband_init(&inst->up_l);
+    halfband_init(&inst->up_r);
+
+    /* Apply default preset */
+    v2_apply_preset(inst, inst->preset_idx);
+
+    fx_log("PSX Verb v2 instance created");
+    return inst;
+}
+
+/* v2 API: destroy instance */
+static void v2_destroy_instance(void *instance) {
+    psxverb_instance_t *inst = (psxverb_instance_t*)instance;
+    if (!inst) return;
+
+    if (inst->work_buffer) {
+        free(inst->work_buffer);
+    }
+    free(inst);
+    fx_log("PSX Verb v2 instance destroyed");
+}
+
+/* v2 API: process block */
+static void v2_process_block(void *instance, int16_t *audio_inout, int frames) {
+    psxverb_instance_t *inst = (psxverb_instance_t*)instance;
+    if (!inst) return;
+
+    const scaled_preset_t *p = &inst->current;
+
+    for (int i = 0; i < frames; i += 2) {
+        if (i + 1 >= frames) break;
+
+        float in_l0 = audio_inout[i * 2] / 32768.0f;
+        float in_r0 = audio_inout[i * 2 + 1] / 32768.0f;
+        float in_l1 = audio_inout[(i + 1) * 2] / 32768.0f;
+        float in_r1 = audio_inout[(i + 1) * 2 + 1] / 32768.0f;
+
+        float Lin = halfband_decimate(&inst->down_l, in_l0, in_l1) * p->vLIN_f;
+        float Rin = halfband_decimate(&inst->down_r, in_r0, in_r1) * p->vRIN_f;
+
+        /* Same-side reflection */
+        float lsame_fb = workarea_read_relative(&inst->work, p->dLSAME);
+        float lsame_iir = workarea_read_relative(&inst->work, p->mLSAME - 1);
+        float lsame_out = (Lin + lsame_fb * p->vWALL_f - lsame_iir) * p->vIIR_f + lsame_iir;
+        workarea_write_relative(&inst->work, p->mLSAME, lsame_out);
+
+        float rsame_fb = workarea_read_relative(&inst->work, p->dRSAME);
+        float rsame_iir = workarea_read_relative(&inst->work, p->mRSAME - 1);
+        float rsame_out = (Rin + rsame_fb * p->vWALL_f - rsame_iir) * p->vIIR_f + rsame_iir;
+        workarea_write_relative(&inst->work, p->mRSAME, rsame_out);
+
+        /* Different-side reflection */
+        float ldiff_fb = workarea_read_relative(&inst->work, p->dRDIFF);
+        float ldiff_iir = workarea_read_relative(&inst->work, p->mLDIFF - 1);
+        float ldiff_out = (Lin + ldiff_fb * p->vWALL_f - ldiff_iir) * p->vIIR_f + ldiff_iir;
+        workarea_write_relative(&inst->work, p->mLDIFF, ldiff_out);
+
+        float rdiff_fb = workarea_read_relative(&inst->work, p->dLDIFF);
+        float rdiff_iir = workarea_read_relative(&inst->work, p->mRDIFF - 1);
+        float rdiff_out = (Rin + rdiff_fb * p->vWALL_f - rdiff_iir) * p->vIIR_f + rdiff_iir;
+        workarea_write_relative(&inst->work, p->mRDIFF, rdiff_out);
+
+        /* Comb filter bank */
+        float Lout = p->vCOMB1_f * workarea_read_relative(&inst->work, p->mLCOMB1) +
+                     p->vCOMB2_f * workarea_read_relative(&inst->work, p->mLCOMB2) +
+                     p->vCOMB3_f * workarea_read_relative(&inst->work, p->mLCOMB3) +
+                     p->vCOMB4_f * workarea_read_relative(&inst->work, p->mLCOMB4);
+
+        float Rout = p->vCOMB1_f * workarea_read_relative(&inst->work, p->mRCOMB1) +
+                     p->vCOMB2_f * workarea_read_relative(&inst->work, p->mRCOMB2) +
+                     p->vCOMB3_f * workarea_read_relative(&inst->work, p->mRCOMB3) +
+                     p->vCOMB4_f * workarea_read_relative(&inst->work, p->mRCOMB4);
+
+        /* All-pass filter 1 */
+        float lapf1_del = workarea_read_relative(&inst->work, p->mLAPF1 - p->dAPF1);
+        Lout -= p->vAPF1_f * lapf1_del;
+        workarea_write_relative(&inst->work, p->mLAPF1, Lout);
+        Lout = Lout * p->vAPF1_f + lapf1_del;
+
+        float rapf1_del = workarea_read_relative(&inst->work, p->mRAPF1 - p->dAPF1);
+        Rout -= p->vAPF1_f * rapf1_del;
+        workarea_write_relative(&inst->work, p->mRAPF1, Rout);
+        Rout = Rout * p->vAPF1_f + rapf1_del;
+
+        /* All-pass filter 2 */
+        float lapf2_del = workarea_read_relative(&inst->work, p->mLAPF2 - p->dAPF2);
+        Lout -= p->vAPF2_f * lapf2_del;
+        workarea_write_relative(&inst->work, p->mLAPF2, Lout);
+        Lout = Lout * p->vAPF2_f + lapf2_del;
+
+        float rapf2_del = workarea_read_relative(&inst->work, p->mRAPF2 - p->dAPF2);
+        Rout -= p->vAPF2_f * rapf2_del;
+        workarea_write_relative(&inst->work, p->mRAPF2, Rout);
+        Rout = Rout * p->vAPF2_f + rapf2_del;
+
+        workarea_advance(&inst->work, 1);
+
+        float out_l0, out_l1, out_r0, out_r1;
+        halfband_interpolate(&inst->up_l, Lout * p->vLOUT_f, &out_l0, &out_l1);
+        halfband_interpolate(&inst->up_r, Rout * p->vROUT_f, &out_r0, &out_r1);
+
+        float dry_mix = 1.0f - inst->mix;
+        float wet_mix = inst->mix;
+
+        float final_l0 = clamp_f(in_l0 * dry_mix + out_l0 * wet_mix, -1.0f, 1.0f);
+        float final_r0 = clamp_f(in_r0 * dry_mix + out_r0 * wet_mix, -1.0f, 1.0f);
+        float final_l1 = clamp_f(in_l1 * dry_mix + out_l1 * wet_mix, -1.0f, 1.0f);
+        float final_r1 = clamp_f(in_r1 * dry_mix + out_r1 * wet_mix, -1.0f, 1.0f);
+
+        audio_inout[i * 2] = (int16_t)(final_l0 * 32767.0f);
+        audio_inout[i * 2 + 1] = (int16_t)(final_r0 * 32767.0f);
+        audio_inout[(i + 1) * 2] = (int16_t)(final_l1 * 32767.0f);
+        audio_inout[(i + 1) * 2 + 1] = (int16_t)(final_r1 * 32767.0f);
+    }
+}
+
+/* v2 API: set parameter */
+static void v2_set_param(void *instance, const char *key, const char *val) {
+    psxverb_instance_t *inst = (psxverb_instance_t*)instance;
+    if (!inst || !key || !val) return;
+
+    if (strcmp(key, "preset") == 0) {
+        int idx = atoi(val);
+        if (idx >= 0 && idx < 6) {
+            v2_apply_preset(inst, idx);
+        }
+    } else if (strcmp(key, "decay") == 0) {
+        inst->decay = clamp_f(atof(val), 0.0f, 1.0f);
+        v2_update_decay(inst);
+    } else if (strcmp(key, "mix") == 0) {
+        inst->mix = clamp_f(atof(val), 0.0f, 1.0f);
+    } else if (strcmp(key, "input_gain") == 0) {
+        inst->input_gain = clamp_f(atof(val), 0.0f, 1.0f);
+        float in_scale = inst->input_gain * 2.0f;
+        inst->current.vLIN_f = inst->base.vLIN_f * in_scale;
+        inst->current.vRIN_f = inst->base.vRIN_f * in_scale;
+    } else if (strcmp(key, "reverb_level") == 0) {
+        inst->reverb_level = clamp_f(atof(val), 0.0f, 1.0f);
+        float out_scale = inst->reverb_level * 4.0f;
+        inst->current.vLOUT_f = inst->base.vLOUT_f * out_scale;
+        inst->current.vROUT_f = inst->base.vROUT_f * out_scale;
+    }
+}
+
+/* v2 API: get parameter */
+static int v2_get_param(void *instance, const char *key, char *buf, int buf_len) {
+    psxverb_instance_t *inst = (psxverb_instance_t*)instance;
+    if (!inst || !key || !buf || buf_len <= 0) return -1;
+
+    if (strcmp(key, "preset") == 0) {
+        return snprintf(buf, buf_len, "%d", inst->preset_idx);
+    } else if (strcmp(key, "preset_name") == 0) {
+        return snprintf(buf, buf_len, "%s", g_presets[inst->preset_idx].name);
+    } else if (strcmp(key, "preset_count") == 0) {
+        return snprintf(buf, buf_len, "6");
+    } else if (strcmp(key, "decay") == 0) {
+        return snprintf(buf, buf_len, "%.2f", (double)inst->decay);
+    } else if (strcmp(key, "mix") == 0) {
+        return snprintf(buf, buf_len, "%.2f", (double)inst->mix);
+    } else if (strcmp(key, "input_gain") == 0) {
+        return snprintf(buf, buf_len, "%.2f", (double)inst->input_gain);
+    } else if (strcmp(key, "reverb_level") == 0) {
+        return snprintf(buf, buf_len, "%.2f", (double)inst->reverb_level);
+    } else if (strcmp(key, "name") == 0) {
+        return snprintf(buf, buf_len, "PSX Verb");
+    }
+    return -1;
+}
+
+/* v2 API table */
+static audio_fx_api_v2_t g_fx_api_v2;
+
+audio_fx_api_v2_t* move_audio_fx_init_v2(const host_api_v1_t *host) {
+    g_host = host;
+
+    memset(&g_fx_api_v2, 0, sizeof(g_fx_api_v2));
+    g_fx_api_v2.api_version = AUDIO_FX_API_VERSION_2;
+    g_fx_api_v2.create_instance = v2_create_instance;
+    g_fx_api_v2.destroy_instance = v2_destroy_instance;
+    g_fx_api_v2.process_block = v2_process_block;
+    g_fx_api_v2.set_param = v2_set_param;
+    g_fx_api_v2.get_param = v2_get_param;
+
+    fx_log("PSX Verb v2 API initialized");
+    return &g_fx_api_v2;
 }
