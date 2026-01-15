@@ -1,7 +1,7 @@
 {
   "id": "psxverb",
   "name": "PSX Verb",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "PlayStation 1 SPU reverb emulation",
   "author": "Charles Vestal",
   "dsp": "psxverb.so",
