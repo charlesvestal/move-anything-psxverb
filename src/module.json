@@ -2,7 +2,7 @@
   "id": "psxverb",
   "name": "PSX Verb",
   "abbrev": "PX",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "PlayStation 1 SPU reverb emulation",
   "author": "Charles Vestal",
   "dsp": "psxverb.so",
@@ -11,9 +11,32 @@
     "chainable": true,
     "component_type": "audio_fx",
     "chain_params": [
-      {"key": "preset", "name": "Preset", "type": "int", "min": 0, "max": 5, "default": 4},
-      {"key": "decay", "name": "Decay", "type": "float", "min": 0.0, "max": 1.0, "default": 0.7, "step": 0.05},
-      {"key": "mix", "name": "Mix", "type": "float", "min": 0.0, "max": 1.0, "default": 0.35, "step": 0.05}
+      {
+        "key": "preset",
+        "name": "Preset",
+        "type": "int",
+        "min": 0,
+        "max": 5,
+        "default": 4
+      },
+      {
+        "key": "decay",
+        "name": "Decay",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.7,
+        "step": 0.05
+      },
+      {
+        "key": "mix",
+        "name": "Mix",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.35,
+        "step": 0.05
+      }
     ]
   }
 }
