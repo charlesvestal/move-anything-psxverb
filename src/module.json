@@ -5,6 +5,7 @@
   "version": "0.3.1",
   "description": "PlayStation 1 SPU reverb emulation",
   "author": "Charles Vestal",
+  "license": "MIT",
   "dsp": "psxverb.so",
   "api_version": 2,
   "capabilities": {
