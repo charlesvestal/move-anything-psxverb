@@ -456,7 +456,17 @@ static inline float max_f(float a, float b) {
     return a > b ? a : b;
 }
 
-
+/* Helper to extract a JSON number value by key */
+static int json_get_number(const char *json, const char *key, float *out) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    const char *pos = strstr(json, search);
+    if (!pos) return -1;
+    pos += strlen(search);
+    while (*pos == ' ') pos++;
+    *out = (float)atof(pos);
+    return 0;
+}
 
 /* ============================================================================
  * AUDIO FX API v2 - Instance-based
@@ -691,6 +701,38 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     psxverb_instance_t *inst = (psxverb_instance_t*)instance;
     if (!inst || !key || !val) return;
 
+    /* State restore from patch save */
+    if (strcmp(key, "state") == 0) {
+        float v;
+        int preset_changed = 0;
+        if (json_get_number(val, "preset", &v) == 0) {
+            int idx = (int)v;
+            if (idx >= 0 && idx < 6 && idx != inst->preset_idx) {
+                inst->preset_idx = idx;
+                preset_changed = 1;
+            }
+        }
+        if (json_get_number(val, "decay", &v) == 0) { inst->decay = clamp_f(v, 0.0f, 1.0f); }
+        if (json_get_number(val, "mix", &v) == 0) { inst->mix = clamp_f(v, 0.0f, 1.0f); }
+        if (json_get_number(val, "input_gain", &v) == 0) { inst->input_gain = clamp_f(v, 0.0f, 1.0f); }
+        if (json_get_number(val, "reverb_level", &v) == 0) { inst->reverb_level = clamp_f(v, 0.0f, 1.0f); }
+
+        /* Apply preset (which also updates decay and gain settings) */
+        if (preset_changed) {
+            v2_apply_preset(inst, inst->preset_idx);
+        } else {
+            /* Update derived values without changing preset */
+            v2_update_decay(inst);
+            float in_scale = inst->input_gain * 2.0f;
+            inst->current.vLIN_f = inst->base.vLIN_f * in_scale;
+            inst->current.vRIN_f = inst->base.vRIN_f * in_scale;
+            float out_scale = inst->reverb_level * 4.0f;
+            inst->current.vLOUT_f = inst->base.vLOUT_f * out_scale;
+            inst->current.vROUT_f = inst->base.vROUT_f * out_scale;
+        }
+        return;
+    }
+
     if (strcmp(key, "preset") == 0) {
         int idx = atoi(val);
         if (idx >= 0 && idx < 6) {
@@ -735,6 +777,12 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
         return snprintf(buf, buf_len, "%.2f", (double)inst->reverb_level);
     } else if (strcmp(key, "name") == 0) {
         return snprintf(buf, buf_len, "PSX Verb");
+    } else if (strcmp(key, "state") == 0) {
+        return snprintf(buf, buf_len,
+            "{\"preset\":%d,\"decay\":%.4f,\"mix\":%.4f,"
+            "\"input_gain\":%.4f,\"reverb_level\":%.4f}",
+            inst->preset_idx, inst->decay, inst->mix,
+            inst->input_gain, inst->reverb_level);
     }
 
     /* UI hierarchy for shadow parameter editor */
