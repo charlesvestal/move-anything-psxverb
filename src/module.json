@@ -2,7 +2,7 @@
   "id": "psxverb",
   "name": "PSX Verb",
   "abbrev": "PX",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "PlayStation 1 SPU reverb emulation",
   "author": "Charles Vestal",
   "license": "MIT",
@@ -15,8 +15,8 @@
       "levels": {
         "root": {
           "name": "PSX Verb",
-          "params": ["preset", "decay", "mix"],
-          "knobs": ["preset", "decay", "mix"]
+          "params": ["preset", "decay", "mix", "input_gain", "reverb_level"],
+          "knobs": ["decay", "mix", "input_gain", "reverb_level"]
         }
       }
     },
@@ -24,9 +24,8 @@
       {
         "key": "preset",
         "name": "Preset",
-        "type": "int",
-        "min": 0,
-        "max": 5,
+        "type": "enum",
+        "options": ["Room", "Studio S", "Studio M", "Studio L", "Hall", "Space Echo"],
         "default": 4
       },
       {
@@ -45,6 +44,24 @@
         "min": 0.0,
         "max": 1.0,
         "default": 0.35,
+        "step": 0.05
+      },
+      {
+        "key": "input_gain",
+        "name": "Input",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "step": 0.05
+      },
+      {
+        "key": "reverb_level",
+        "name": "Level",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
         "step": 0.05
       }
     ]
