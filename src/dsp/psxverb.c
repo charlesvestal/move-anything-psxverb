@@ -734,7 +734,15 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     }
 
     if (strcmp(key, "preset") == 0) {
-        int idx = atoi(val);
+        int idx = -1;
+        /* Accept both string names and numeric indices */
+        if (strcmp(val, "Room") == 0) idx = 0;
+        else if (strcmp(val, "Studio S") == 0) idx = 1;
+        else if (strcmp(val, "Studio M") == 0) idx = 2;
+        else if (strcmp(val, "Studio L") == 0) idx = 3;
+        else if (strcmp(val, "Hall") == 0) idx = 4;
+        else if (strcmp(val, "Space Echo") == 0) idx = 5;
+        else idx = atoi(val);
         if (idx >= 0 && idx < 6) {
             v2_apply_preset(inst, idx);
         }
@@ -762,7 +770,8 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (!inst || !key || !buf || buf_len <= 0) return -1;
 
     if (strcmp(key, "preset") == 0) {
-        return snprintf(buf, buf_len, "%d", inst->preset_idx);
+        /* Return preset name for enum type compatibility */
+        return snprintf(buf, buf_len, "%s", g_presets[inst->preset_idx].name);
     } else if (strcmp(key, "preset_name") == 0) {
         return snprintf(buf, buf_len, "%s", g_presets[inst->preset_idx].name);
     } else if (strcmp(key, "preset_count") == 0) {
@@ -816,7 +825,7 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     /* Chain params metadata for shadow parameter editor */
     if (strcmp(key, "chain_params") == 0) {
         const char *params_json = "["
-            "{\"key\":\"preset\",\"name\":\"Preset\",\"type\":\"int\",\"min\":0,\"max\":5},"
+            "{\"key\":\"preset\",\"name\":\"Preset\",\"type\":\"enum\",\"options\":[\"Room\",\"Studio S\",\"Studio M\",\"Studio L\",\"Hall\",\"Space Echo\"]},"
             "{\"key\":\"decay\",\"name\":\"Decay\",\"type\":\"float\",\"min\":0,\"max\":1},"
             "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1},"
             "{\"key\":\"input_gain\",\"name\":\"Input Gain\",\"type\":\"float\",\"min\":0,\"max\":1},"
