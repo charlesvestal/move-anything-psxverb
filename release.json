@@ -1,5 +1,5 @@
 {
-  "version": "0.3.2",
-  "download_url": "https://github.com/charlesvestal/move-anything-psxverb/releases/download/v0.3.2/psxverb-module.tar.gz",
+  "version": "0.5.0",
+  "download_url": "https://github.com/charlesvestal/move-anything-psxverb/releases/download/v0.5.0/psxverb-module.tar.gz",
   "install_path": "chain/audio_fx"
 }
