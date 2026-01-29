@@ -4,7 +4,7 @@
   "abbrev": "PX",
   "version": "0.3.2",
   "description": "PlayStation 1 SPU reverb emulation",
-  "author": "Charles Vestal",
+  "author": "charlesvestal",
   "license": "MIT",
   "dsp": "psxverb.so",
   "api_version": 2,
