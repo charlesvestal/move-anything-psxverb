@@ -2,7 +2,7 @@
   "id": "psxverb",
   "name": "PSX Verb",
   "abbrev": "PX",
-  "version": "0.3.2",
+  "version": "0.5.0",
   "description": "PlayStation 1 SPU reverb emulation",
   "author": "charlesvestal",
   "license": "MIT",
@@ -15,18 +15,18 @@
       "levels": {
         "root": {
           "name": "PSX Verb",
-          "params": ["preset", "decay", "mix", "input_gain", "reverb_level"],
-          "knobs": ["decay", "mix", "input_gain", "reverb_level"]
+          "params": ["model", "decay", "mix", "input_gain", "reverb_level"],
+          "knobs": ["model", "decay", "mix", "reverb_level"]
         }
       }
     },
     "chain_params": [
       {
-        "key": "preset",
-        "name": "Preset",
+        "key": "model",
+        "name": "Model",
         "type": "enum",
         "options": ["Room", "Studio S", "Studio M", "Studio L", "Hall", "Space Echo"],
-        "default": 4
+        "default": "Hall"
       },
       {
         "key": "decay",
@@ -35,7 +35,7 @@
         "min": 0.0,
         "max": 1.0,
         "default": 0.7,
-        "step": 0.05
+        "step": 0.01
       },
       {
         "key": "mix",
@@ -44,7 +44,7 @@
         "min": 0.0,
         "max": 1.0,
         "default": 0.35,
-        "step": 0.05
+        "step": 0.01
       },
       {
         "key": "input_gain",
@@ -53,7 +53,7 @@
         "min": 0.0,
         "max": 1.0,
         "default": 0.5,
-        "step": 0.05
+        "step": 0.01
       },
       {
         "key": "reverb_level",
@@ -62,7 +62,7 @@
         "min": 0.0,
         "max": 1.0,
         "default": 0.5,
-        "step": 0.05
+        "step": 0.01
       }
     ]
   }

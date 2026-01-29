@@ -39,8 +39,10 @@ typedef struct audio_fx_api_v2 {
 
 typedef audio_fx_api_v2_t* (*audio_fx_init_v2_fn)(const host_api_v1_t *host);
 
-#define SAMPLE_RATE 44100
-#define PSX_INTERNAL_RATE 22050  /* PSX SPU runs at half sample rate */
+#define SAMPLE_RATE 48000       /* Move hardware sample rate */
+#define PSX_NATIVE_RATE 44100   /* PSX native sample rate */
+#define PSX_INTERNAL_RATE 22050 /* PSX SPU runs at half sample rate */
+#define RATE_SCALE ((float)SAMPLE_RATE / (float)PSX_NATIVE_RATE)  /* ~1.088 */
 
 /* ============================================================================
  * HALFBAND 39-TAP FIR FILTER
@@ -486,31 +488,40 @@ typedef struct {
     halfband_t up_l, up_r;
 } psxverb_instance_t;
 
-/* v2 helper: scale preset with instance state */
-static void v2_scale_preset(psxverb_instance_t *inst, const psx_preset_t *src, scaled_preset_t *dst) {
-    dst->dAPF1 = src->dAPF1;
-    dst->dAPF2 = src->dAPF2;
-    dst->dLSAME = src->dLSAME;
-    dst->dRSAME = src->dRSAME;
-    dst->dLDIFF = src->dLDIFF;
-    dst->dRDIFF = src->dRDIFF;
-    dst->mLSAME = src->mLSAME;
-    dst->mRSAME = src->mRSAME;
-    dst->mLDIFF = src->mLDIFF;
-    dst->mRDIFF = src->mRDIFF;
-    dst->mLCOMB1 = src->mLCOMB1;
-    dst->mRCOMB1 = src->mRCOMB1;
-    dst->mLCOMB2 = src->mLCOMB2;
-    dst->mRCOMB2 = src->mRCOMB2;
-    dst->mLCOMB3 = src->mLCOMB3;
-    dst->mRCOMB3 = src->mRCOMB3;
-    dst->mLCOMB4 = src->mLCOMB4;
-    dst->mRCOMB4 = src->mRCOMB4;
-    dst->mLAPF1 = src->mLAPF1;
-    dst->mRAPF1 = src->mRAPF1;
-    dst->mLAPF2 = src->mLAPF2;
-    dst->mRAPF2 = src->mRAPF2;
+/* Helper to scale delay value from 44.1kHz to actual sample rate */
+static inline uint16_t scale_delay(uint16_t delay) {
+    return (uint16_t)(delay * RATE_SCALE);
+}
 
+/* v2 helper: scale preset with instance state - matches reference PsxReverb.h ScalePreset() */
+static void v2_scale_preset(psxverb_instance_t *inst, const psx_preset_t *src, scaled_preset_t *dst) {
+    /* Scale all delay offsets from 44.1kHz to 48kHz */
+    dst->dAPF1 = scale_delay(src->dAPF1);
+    dst->dAPF2 = scale_delay(src->dAPF2);
+    dst->dLSAME = scale_delay(src->dLSAME);
+    dst->dRSAME = scale_delay(src->dRSAME);
+    dst->dLDIFF = scale_delay(src->dLDIFF);
+    dst->dRDIFF = scale_delay(src->dRDIFF);
+
+    /* Scale all memory addresses */
+    dst->mLSAME = scale_delay(src->mLSAME);
+    dst->mRSAME = scale_delay(src->mRSAME);
+    dst->mLDIFF = scale_delay(src->mLDIFF);
+    dst->mRDIFF = scale_delay(src->mRDIFF);
+    dst->mLCOMB1 = scale_delay(src->mLCOMB1);
+    dst->mRCOMB1 = scale_delay(src->mRCOMB1);
+    dst->mLCOMB2 = scale_delay(src->mLCOMB2);
+    dst->mRCOMB2 = scale_delay(src->mRCOMB2);
+    dst->mLCOMB3 = scale_delay(src->mLCOMB3);
+    dst->mRCOMB3 = scale_delay(src->mRCOMB3);
+    dst->mLCOMB4 = scale_delay(src->mLCOMB4);
+    dst->mRCOMB4 = scale_delay(src->mRCOMB4);
+    dst->mLAPF1 = scale_delay(src->mLAPF1);
+    dst->mRAPF1 = scale_delay(src->mRAPF1);
+    dst->mLAPF2 = scale_delay(src->mLAPF2);
+    dst->mRAPF2 = scale_delay(src->mRAPF2);
+
+    /* Convert coefficients to float */
     dst->vIIR_f = coeff_to_float(src->vIIR);
     dst->vCOMB1_f = coeff_to_float(src->vCOMB1);
     dst->vCOMB2_f = coeff_to_float(src->vCOMB2);
@@ -525,9 +536,42 @@ static void v2_scale_preset(psxverb_instance_t *inst, const psx_preset_t *src, s
     dst->vROUT_f = coeff_to_float(src->vROUT);
 }
 
-/* v2 helper: update decay */
+/* v2 helper: update decay - adaptive formula from shared_dsp/PsxReverb.h
+ * Automatically calculates safe maximum scale per preset to prevent oscillation.
+ * - 0-50% decay maps to [0.5x, 1.0x] (below authentic to authentic PSX)
+ * - 50-100% decay maps to [1.0x, maxScale] (authentic to maximum safe)
+ * - Final value clamped to [-0.995, 0.995] to prevent runaway feedback
+ */
 static void v2_update_decay(psxverb_instance_t *inst) {
-    inst->current.vWALL_f = inst->base.vWALL_f * inst->decay;
+    float base = inst->base.vWALL_f;
+    if (base < 0) base = -base;  /* abs() */
+    if (base < 1e-5f) base = 1e-5f;  /* avoid div by zero */
+
+    /* Calculate maximum safe scale for this preset */
+    float max_scale = 0.99f / base;
+    if (max_scale < 0.5f) max_scale = 0.5f;
+    if (max_scale > 10.0f) max_scale = 10.0f;
+
+    float min_scale = 0.5f;
+    float mid_scale = 1.0f;  /* authentic PSX at 50% */
+    float mid_norm = 0.5f;
+
+    float wall_scale;
+    if (inst->decay <= mid_norm) {
+        /* 0-50%: linear from 0.5x to 1.0x */
+        float t = inst->decay / mid_norm;
+        wall_scale = min_scale + t * (mid_scale - min_scale);
+    } else {
+        /* 50-100%: linear from 1.0x to maxScale */
+        float t = (inst->decay - mid_norm) / (1.0f - mid_norm);
+        wall_scale = mid_scale + t * (max_scale - mid_scale);
+    }
+
+    float target = inst->base.vWALL_f * wall_scale;
+    /* Clamp to stable range */
+    if (target > 0.995f) target = 0.995f;
+    if (target < -0.995f) target = -0.995f;
+    inst->current.vWALL_f = target;
 }
 
 /* v2 helper: apply preset */
@@ -549,8 +593,9 @@ static void v2_apply_preset(psxverb_instance_t *inst, int idx) {
 
     v2_update_decay(inst);
 
-    /* Initialize work area */
-    uint32_t work_size = next_pow2(p->work_size);
+    /* Initialize work area - matches reference PsxReverb.h Init()
+     * work_size is in bytes at 44.1kHz, convert to samples at 48kHz */
+    uint32_t work_size = next_pow2((uint32_t)(p->work_size * RATE_SCALE / sizeof(int16_t)));
     if (work_size > WORK_MAX_SIZE) work_size = WORK_MAX_SIZE;
 
     memset(inst->work_buffer, 0, work_size * sizeof(int16_t));
@@ -572,7 +617,7 @@ static void* v2_create_instance(const char *module_dir, const char *config_json)
 
     /* Initialize state */
     inst->preset_idx = 4;       /* Default: Hall */
-    inst->decay = 0.8f;
+    inst->decay = 0.7f;         /* With formula 0.5+(d*0.5), 0.7 gives 0.85x wall feedback */
     inst->mix = 0.35f;
     inst->input_gain = 0.5f;
     inst->reverb_level = 0.5f;
@@ -733,7 +778,7 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
-    if (strcmp(key, "preset") == 0) {
+    if (strcmp(key, "preset") == 0 || strcmp(key, "model") == 0) {
         int idx = -1;
         /* Accept both string names and numeric indices */
         if (strcmp(val, "Room") == 0) idx = 0;
@@ -769,10 +814,10 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     psxverb_instance_t *inst = (psxverb_instance_t*)instance;
     if (!inst || !key || !buf || buf_len <= 0) return -1;
 
-    if (strcmp(key, "preset") == 0) {
+    if (strcmp(key, "preset") == 0 || strcmp(key, "model") == 0) {
         /* Return preset name for enum type compatibility */
         return snprintf(buf, buf_len, "%s", g_presets[inst->preset_idx].name);
-    } else if (strcmp(key, "preset_name") == 0) {
+    } else if (strcmp(key, "preset_name") == 0 || strcmp(key, "model_name") == 0) {
         return snprintf(buf, buf_len, "%s", g_presets[inst->preset_idx].name);
     } else if (strcmp(key, "preset_count") == 0) {
         return snprintf(buf, buf_len, "6");
@@ -794,23 +839,15 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
             inst->input_gain, inst->reverb_level);
     }
 
-    /* UI hierarchy for shadow parameter editor */
+    /* UI hierarchy for shadow parameter editor - flat list */
     if (strcmp(key, "ui_hierarchy") == 0) {
         const char *hierarchy = "{"
             "\"modes\":null,"
             "\"levels\":{"
                 "\"root\":{"
-                    "\"list_param\":\"preset\","
-                    "\"count_param\":\"preset_count\","
-                    "\"name_param\":\"preset_name\","
-                    "\"children\":\"params\","
-                    "\"knobs\":[],"
-                    "\"params\":[]"
-                "},"
-                "\"params\":{"
                     "\"children\":null,"
-                    "\"knobs\":[\"decay\",\"mix\",\"input_gain\",\"reverb_level\"],"
-                    "\"params\":[\"decay\",\"mix\",\"input_gain\",\"reverb_level\"]"
+                    "\"knobs\":[\"model\",\"decay\",\"mix\",\"reverb_level\"],"
+                    "\"params\":[\"model\",\"decay\",\"mix\",\"input_gain\",\"reverb_level\"]"
                 "}"
             "}"
         "}";
@@ -825,11 +862,11 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     /* Chain params metadata for shadow parameter editor */
     if (strcmp(key, "chain_params") == 0) {
         const char *params_json = "["
-            "{\"key\":\"preset\",\"name\":\"Preset\",\"type\":\"enum\",\"options\":[\"Room\",\"Studio S\",\"Studio M\",\"Studio L\",\"Hall\",\"Space Echo\"]},"
-            "{\"key\":\"decay\",\"name\":\"Decay\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"input_gain\",\"name\":\"Input Gain\",\"type\":\"float\",\"min\":0,\"max\":1},"
-            "{\"key\":\"reverb_level\",\"name\":\"Reverb Level\",\"type\":\"float\",\"min\":0,\"max\":1}"
+            "{\"key\":\"model\",\"name\":\"Model\",\"type\":\"enum\",\"options\":[\"Room\",\"Studio S\",\"Studio M\",\"Studio L\",\"Hall\",\"Space Echo\"],\"default\":\"Hall\"},"
+            "{\"key\":\"decay\",\"name\":\"Decay\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.7,\"step\":0.01},"
+            "{\"key\":\"mix\",\"name\":\"Mix\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.35,\"step\":0.01},"
+            "{\"key\":\"input_gain\",\"name\":\"Input\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.5,\"step\":0.01},"
+            "{\"key\":\"reverb_level\",\"name\":\"Level\",\"type\":\"float\",\"min\":0,\"max\":1,\"default\":0.5,\"step\":0.01}"
         "]";
         int len = strlen(params_json);
         if (len < buf_len) {
