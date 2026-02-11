@@ -788,7 +788,7 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         else if (strcmp(val, "Hall") == 0) idx = 4;
         else if (strcmp(val, "Space Echo") == 0) idx = 5;
         else idx = atoi(val);
-        if (idx >= 0 && idx < 6) {
+        if (idx >= 0 && idx < 6 && idx != inst->preset_idx) {
             v2_apply_preset(inst, idx);
         }
     } else if (strcmp(key, "decay") == 0) {
