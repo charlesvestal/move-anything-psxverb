@@ -20,7 +20,14 @@
               "key": "model",
               "label": "Model",
               "type": "enum",
-              "options": ["Room", "Studio S", "Studio M", "Studio L", "Hall", "Space Echo"],
+              "options": [
+                "Room",
+                "Studio S",
+                "Studio M",
+                "Studio L",
+                "Hall",
+                "Space Echo"
+              ],
               "default": "Hall"
             },
             {
@@ -64,54 +71,14 @@
               "unit": "%"
             }
           ],
-          "knobs": ["model", "decay", "mix", "reverb_level"]
+          "knobs": [
+            "model",
+            "decay",
+            "mix",
+            "reverb_level"
+          ]
         }
       }
-    },
-    "chain_params": [
-      {
-        "key": "model",
-        "name": "Model",
-        "type": "enum",
-        "options": ["Room", "Studio S", "Studio M", "Studio L", "Hall", "Space Echo"],
-        "default": "Hall"
-      },
-      {
-        "key": "decay",
-        "name": "Decay",
-        "type": "float",
-        "min": 0.0,
-        "max": 1.0,
-        "default": 0.7,
-        "step": 0.01
-      },
-      {
-        "key": "mix",
-        "name": "Mix",
-        "type": "float",
-        "min": 0.0,
-        "max": 1.0,
-        "default": 0.35,
-        "step": 0.01
-      },
-      {
-        "key": "input_gain",
-        "name": "Input",
-        "type": "float",
-        "min": 0.0,
-        "max": 1.0,
-        "default": 0.5,
-        "step": 0.01
-      },
-      {
-        "key": "reverb_level",
-        "name": "Level",
-        "type": "float",
-        "min": 0.0,
-        "max": 1.0,
-        "default": 0.5,
-        "step": 0.01
-      }
-    ]
+    }
   }
 }
