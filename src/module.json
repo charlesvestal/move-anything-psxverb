@@ -2,7 +2,7 @@
   "id": "psxverb",
   "name": "PSX Verb",
   "abbrev": "PX",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "PlayStation 1 SPU reverb emulation",
   "author": "charlesvestal",
   "license": "MIT",
